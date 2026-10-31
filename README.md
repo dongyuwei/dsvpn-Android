@@ -3,6 +3,74 @@
 [![GitHub CI status](https://github.com/jedisct1/dsvpn/workflows/CI/badge.svg)](https://github.com/jedisct1/dsvpn/actions)
 ![CodeQL scan](https://github.com/jedisct1/dsvpn/workflows/CodeQL%20scan/badge.svg)
 
+## Android VPN client (addition in this repository)
+
+An Android VPN client built directly on this repository's own C core
+(`src/vpn.c` + `src/charm.c` + `src/os.c`, compiled in place by the NDK — no
+code is duplicated). Sources live in [`android/`](android/):
+
+- **Global mode (default)**: all traffic goes through the tunnel; IPv6 is
+  blackholed inside it, matching the desktop clients (no IPv6 leaks)
+- **Whitelist mode**: only the selected apps use the VPN
+  (`VpnService.addAllowedApplication`); everything else stays direct
+- **Remote DNS resolution**: editable, defaults to `8.8.8.8, 1.1.1.1`;
+  queries travel through the tunnel and are resolved by the dsvpn server,
+  never locally
+- Shared key imported as base64 text or from a file (on the server:
+  `dd if=/dev/urandom of=vpn.key count=1 bs=32` + `base64 < vpn.key`)
+- A "Test" button verifies the server, port and key (full key exchange,
+  without establishing the tunnel)
+- Verified on an emulator and on a Xiaomi Mi 10 Pro (Android 13): Chrome
+  works in both global and whitelist modes
+
+### Building
+
+```bash
+cd android
+./gradlew :app:assembleRelease                  # needs JDK 17 + Android SDK/NDK
+                                                # (missing pieces are installed by Gradle)
+./gradlew :app:assembleRelease -Pabi=arm64-v8a  # slimmer single-ABI APK
+adb install -r app/build/outputs/apk/release/app-release.apk
+```
+
+### CI publishing
+
+After pushing to GitHub, `.github/workflows/android.yml` takes over:
+
+- **Push to master** → build and publish a rolling **pre-release** (tag
+  `pre-release`, with universal + arm64 APKs and SHA256SUMS, replaced on
+  every push)
+- **Push a `v*` tag** (e.g. `v1.0.0`) → build and publish a formal
+  **Release** with generated release notes
+- PRs touching `android/**`, `src/**` or `include/**` → build check only;
+  artifacts downloadable from the Actions page
+
+> Release signing (optional): set the `DSVPN_KEYSTORE_BASE64` (base64 of a
+> keystore), `DSVPN_KEYSTORE_PASSWORD`, `DSVPN_KEY_ALIAS` and
+> `DSVPN_KEY_PASSWORD` repository secrets. Without them, APKs are
+> debug-signed (installable, but must be uninstalled before upgrading to a
+> signed release).
+
+### Local end-to-end testing (no real server needed)
+
+Run a desktop server and reach it from the device:
+
+```bash
+sudo ./dsvpn server vpn.key auto 1959
+adb reverse tcp:1959 tcp:1959   # physical device: 127.0.0.1:1959 -> the computer
+```
+
+Emulators don't need the reverse — just enter `10.0.2.2` as the server. A
+macOS server additionally needs pf NAT for internet egress:
+`echo "nat on en0 inet from 192.168.192.0/24 to any -> (en0)" | sudo pfctl -ef -`.
+
+> Architecture diagram, MTU notes, MIUI keep-alive and more in
+> [android/README.md](android/README.md).
+
+---
+
+> ↓↓↓ Everything below is the original upstream README ↓↓↓
+
 DSVPN is a Dead Simple VPN, designed to address the most common use case for using a VPN:
 
 ```text
@@ -122,7 +190,6 @@ If all the remaining parameters of a command would be `auto`, they don't have to
 
 ## Related projects
 
-* [android/](android/README.md) is an Android client for DSVPN, built on this repository's own C core
 * [dsvpn-ios](https://github.com/jedisct1/dsvpn-ios) is an iOS client for DSVPN
 * Robert Debock maintains [an Ansible role for DSVPN](https://github.com/robertdebock/ansible-role-dsvpn)
 * [OpenMPTCProuter](http://www.openmptcprouter.com/) is an OpenWrt-based router OS that supports DSVPN
