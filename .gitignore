@@ -43,3 +43,4 @@ key
 modules.order
 zig-out
 .zig-cache
+.zcode
