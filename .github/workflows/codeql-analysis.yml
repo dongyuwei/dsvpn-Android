@@ -30,6 +30,11 @@ jobs:
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          # Scan the C core only: autobuild runs `make` and cannot compile
+          # the Kotlin sources under android/ (built separately by
+          # android.yml), which used to fail the java database.
+          languages: c-cpp
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
