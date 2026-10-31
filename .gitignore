@@ -38,7 +38,7 @@
 Mkfile.old
 Module.symvers
 dkms.conf
-dsvpn
+/dsvpn
 key
 modules.order
 zig-out
