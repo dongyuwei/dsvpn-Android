@@ -72,4 +72,14 @@
 
 extern volatile sig_atomic_t exit_signal_received;
 
+/* Library entry points for the Android client (see android/). */
+#ifdef __ANDROID__
+int dsvpn_client_run(const int tun_fd, const unsigned char key[32], const char *server,
+                     const char *port);
+
+void dsvpn_client_stop(void);
+
+int dsvpn_client_test(const char *server, const char *port, const unsigned char key[32]);
+#endif
+
 #endif

@@ -28,6 +28,10 @@ int tcp_opts(int fd);
 
 int tun_create(char if_name[IFNAMSIZ], const char *wanted_name);
 
+#ifdef __ANDROID__
+void android_set_tun_fd(const int fd);
+#endif
+
 int tun_set_mtu(const char *if_name, int mtu);
 
 ssize_t tun_read(int fd, void *data, size_t size);

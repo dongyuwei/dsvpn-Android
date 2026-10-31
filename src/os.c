@@ -72,6 +72,26 @@ ssize_t safe_write_partial(const int fd, void *const buf_, const size_t max_coun
 }
 
 #ifdef __linux__
+#ifdef __ANDROID__
+static int android_tun_fd = -1;
+
+void android_set_tun_fd(const int fd)
+{
+    android_tun_fd = fd;
+}
+
+int tun_create(char if_name[IFNAMSIZ], const char *wanted_name)
+{
+    (void) wanted_name;
+    if (android_tun_fd == -1) {
+        errno = EINVAL;
+        return -1;
+    }
+    snprintf(if_name, IFNAMSIZ, "tun");
+
+    return android_tun_fd;
+}
+#else
 int tun_create(char if_name[IFNAMSIZ], const char *wanted_name)
 {
     struct ifreq ifr;
@@ -95,6 +115,7 @@ int tun_create(char if_name[IFNAMSIZ], const char *wanted_name)
 
     return fd;
 }
+#endif /* __ANDROID__ */
 #elif defined(__APPLE__)
 static int tun_create_by_id(char if_name[IFNAMSIZ], unsigned int id)
 {
@@ -195,6 +216,12 @@ int tun_create(char if_name[IFNAMSIZ], const char *wanted_name)
 
 int tun_set_mtu(const char *if_name, int mtu)
 {
+#ifdef __ANDROID__
+    (void) if_name;
+    (void) mtu;
+
+    return 0; /* the MTU is set by VpnService.Builder.setMtu() */
+#else
     struct ifreq ifr;
     int          fd;
 
@@ -208,6 +235,7 @@ int tun_set_mtu(const char *if_name, int mtu)
         return -1;
     }
     return close(fd);
+#endif /* __ANDROID__ */
 }
 
 #if !defined(__APPLE__) && !defined(__OpenBSD__)
@@ -442,6 +470,11 @@ int shell_cmd(const char *substs[][2], const char *args_str, int silent)
 
 Cmds firewall_rules_cmds(int is_server)
 {
+#ifdef __ANDROID__
+    (void) is_server;
+
+    return (Cmds) { NULL, NULL }; /* routing and firewall rules are managed by VpnService */
+#else
     if (is_server) {
 #ifdef __linux__
         static const char *set_cmds
@@ -534,4 +567,5 @@ Cmds firewall_rules_cmds(int is_server)
 #endif
         return (Cmds) { set_cmds, unset_cmds };
     }
+#endif /* __ANDROID__ */
 }

@@ -85,6 +85,19 @@ static int firewall_rules(Context *context, int set, int silent)
     return 0;
 }
 
+#ifdef __ANDROID__
+/* Implemented in the JNI layer; protects the socket from being routed into
+ * the VPN itself (VpnService.protect()). */
+extern int android_protect_fd(const int fd);
+#else
+static int android_protect_fd(const int fd)
+{
+    (void) fd;
+
+    return 0;
+}
+#endif
+
 static int tcp_client(const char *address, const char *port)
 {
     struct addrinfo hints, *res;
@@ -105,7 +118,7 @@ static int tcp_client(const char *address, const char *port)
         return -1;
     }
     if ((client_fd = socket(res->ai_family, SOCK_STREAM, IPPROTO_TCP)) == -1 ||
-        tcp_opts(client_fd) != 0 ||
+        android_protect_fd(client_fd) != 0 || tcp_opts(client_fd) != 0 ||
         connect(client_fd, (const struct sockaddr *) res->ai_addr, res->ai_addrlen) != 0) {
         freeaddrinfo(res);
         err = errno;
@@ -299,17 +312,20 @@ static int client_key_exchange(Context *context)
 
 static int client_connect(Context *context)
 {
-    const char *ext_gw_ip = NULL;
-
     context->client_buf.pos = 0;
     memset(context->client_buf.data, 0, sizeof context->client_buf.data);
 #ifndef NO_DEFAULT_ROUTES
-    if (context->wanted_ext_gw_ip == NULL && (ext_gw_ip = get_default_gw_ip()) != NULL &&
-        strcmp(ext_gw_ip, context->ext_gw_ip) != 0) {
-        printf("Gateway changed from [%s] to [%s]\n", context->ext_gw_ip, ext_gw_ip);
-        firewall_rules(context, 0, 0);
-        snprintf(context->ext_gw_ip, sizeof context->ext_gw_ip, "%s", ext_gw_ip);
-        firewall_rules(context, 1, 0);
+    {
+        const char *ext_gw_ip = NULL;
+
+        if (context->wanted_ext_gw_ip == NULL &&
+            (ext_gw_ip = get_default_gw_ip()) != NULL &&
+            strcmp(ext_gw_ip, context->ext_gw_ip) != 0) {
+            printf("Gateway changed from [%s] to [%s]\n", context->ext_gw_ip, ext_gw_ip);
+            firewall_rules(context, 0, 0);
+            snprintf(context->ext_gw_ip, sizeof context->ext_gw_ip, "%s", ext_gw_ip);
+            firewall_rules(context, 1, 0);
+        }
     }
 #endif
     memset(context->uc_st, 0, sizeof context->uc_st);
@@ -658,3 +674,84 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+
+#ifdef __ANDROID__
+static Context android_context;
+
+/* Library entry point used by the Android client. The tun descriptor comes
+ * from VpnService.Builder.establish(); this function owns and closes it.
+ * Returns when the event loop exits (stop requested or fatal error). */
+int dsvpn_client_run(const int tun_fd, const unsigned char key[32], const char *server,
+                     const char *port)
+{
+    Context *const context = &android_context;
+
+    android_set_tun_fd(tun_fd);
+    memset(context, 0, sizeof *context);
+    context->is_server         = 0;
+    context->server_ip_or_name = server;
+    context->server_port       = port;
+    context->local_tun_ip      = DEFAULT_CLIENT_IP;
+    context->remote_tun_ip     = DEFAULT_SERVER_IP;
+    uc_state_init(context->uc_kx_st, key, (const unsigned char *) "VPN Key Exchange");
+    get_tun6_addresses(context);
+    context->tun_fd = tun_create(context->if_name, NULL);
+    if (context->tun_fd == -1) {
+        perror("tun device creation");
+        return -1;
+    }
+    printf("Interface: [%s]\n", context->if_name);
+    (void) tun_set_mtu(context->if_name, DEFAULT_MTU);
+    context->firewall_rules_set = -1;
+    if (resolve_ip(context->server_ip, sizeof context->server_ip, context->server_ip_or_name) != 0) {
+        close(context->tun_fd);
+        return -1;
+    }
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    if (doit(context) != 0) {
+        close(context->tun_fd);
+        return -1;
+    }
+    close(context->tun_fd);
+    puts("Done.");
+
+    return 0;
+}
+
+/* Interrupts dsvpn_client_run(). Takes effect within one poll tick (1.5s),
+ * or as soon as the current blocking read/connect returns. */
+void dsvpn_client_stop(void)
+{
+    exit_signal_received = 1;
+}
+
+/* Connects to [server]:[port] and performs the key exchange only. Returns 0
+ * if the server answered with a valid response for this key. */
+int dsvpn_client_test(const char *server, const char *port, const unsigned char key[32])
+{
+    Context *const context = malloc(sizeof *context);
+    int            ret     = -1;
+
+    if (context == NULL) {
+        return -1;
+    }
+    memset(context, 0, sizeof *context);
+    context->is_server = 0;
+    uc_state_init(context->uc_kx_st, key, (const unsigned char *) "VPN Key Exchange");
+    context->client_fd = tcp_client(server, port);
+    if (context->client_fd == -1) {
+        free(context);
+        return -1;
+    }
+    if (client_key_exchange(context) == 0) {
+        ret = 0;
+    } else {
+        errno = EACCES;
+    }
+    client_disconnect(context);
+    free(context);
+
+    return ret;
+}
+#endif /* __ANDROID__ */
