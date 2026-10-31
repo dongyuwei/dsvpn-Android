@@ -177,6 +177,12 @@ class DsvpnVpnService : VpnService() {
             return
         }
 
+        // The native session may already have failed and torn itself down
+        // (onNativeExit) by the time start() returns; don't claim success.
+        if (!DsvpnNative.isRunning()) {
+            tunFd = null
+            return
+        }
         running = true
         broadcastState(this, true)
     }

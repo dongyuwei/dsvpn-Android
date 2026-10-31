@@ -678,6 +678,15 @@ int main(int argc, char *argv[])
 #ifdef __ANDROID__
 static Context android_context;
 
+/* Unlike the CLI handler, never reverts to SIG_DFL: the library can be
+ * stopped and restarted repeatedly, and a default SIGTERM would kill the
+ * whole app process. */
+static void android_signal_handler(int sig)
+{
+    (void) sig;
+    exit_signal_received = 1;
+}
+
 /* Library entry point used by the Android client. The tun descriptor comes
  * from VpnService.Builder.establish(); this function owns and closes it.
  * Returns when the event loop exits (stop requested or fatal error). */
@@ -688,7 +697,9 @@ int dsvpn_client_run(const int tun_fd, const unsigned char key[32], const char *
 
     android_set_tun_fd(tun_fd);
     memset(context, 0, sizeof *context);
-    context->is_server         = 0;
+    context->client_fd      = -1;
+    context->is_server      = 0;
+    exit_signal_received    = 0; /* a previous session may have stopped us */
     context->server_ip_or_name = server;
     context->server_port       = port;
     context->local_tun_ip      = DEFAULT_CLIENT_IP;
@@ -707,8 +718,8 @@ int dsvpn_client_run(const int tun_fd, const unsigned char key[32], const char *
         close(context->tun_fd);
         return -1;
     }
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    signal(SIGINT, android_signal_handler);
+    signal(SIGTERM, android_signal_handler);
     if (doit(context) != 0) {
         close(context->tun_fd);
         return -1;
@@ -724,6 +735,11 @@ int dsvpn_client_run(const int tun_fd, const unsigned char key[32], const char *
 void dsvpn_client_stop(void)
 {
     exit_signal_received = 1;
+    /* Wake the session thread immediately if it is parked in poll() or
+     * blocked in connect() on the TCP socket. */
+    if (android_context.client_fd != -1) {
+        (void) shutdown(android_context.client_fd, SHUT_RDWR);
+    }
 }
 
 /* Connects to [server]:[port] and performs the key exchange only. Returns 0

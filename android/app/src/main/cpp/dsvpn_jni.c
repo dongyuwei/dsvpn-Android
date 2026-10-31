@@ -26,6 +26,11 @@ static jmethodID  protect_mid;     /* VpnService.protect(int)                  *
 static jmethodID  on_exit_mid;     /* DsvpnVpnService.onNativeExit()           */
 static pthread_t  vpn_thread;
 static volatile int vpn_running;
+/* Session generation: a session stopped by the user may take up to a poll
+ * tick (or a blocked connect) to unwind. Only the thread owning the current
+ * generation may update the shared state or notify the service; a stale
+ * thread exiting after a new session started must stay silent. */
+static volatile unsigned session_gen;
 
 /* Pump whatever the C core prints (printf/fprintf stderr) into logcat. */
 static void *log_pump(void *arg)
@@ -115,7 +120,6 @@ int android_protect_fd(const int fd)
 
 static void notify_exit(JNIEnv *env)
 {
-    vpn_running = 0;
     if (service != NULL) {
         (*env)->CallVoidMethod(env, service, on_exit_mid);
         if ((*env)->ExceptionCheck(env)) {
@@ -129,6 +133,7 @@ typedef struct StartArgs {
     unsigned char key[32];
     char          server[256];
     char          port[8];
+    unsigned      gen;
 } StartArgs;
 
 static void *vpn_thread_main(void *arg)
@@ -140,15 +145,21 @@ static void *vpn_thread_main(void *arg)
     if (!attached && (*jvm)->AttachCurrentThread(jvm, &env, NULL) != JNI_OK) {
         env = NULL;
     }
-    LOGI("VPN session starting (tun fd %d)", args->tun_fd);
+    LOGI("VPN session starting (tun fd %d, gen %u)", args->tun_fd, args->gen);
     if (dsvpn_client_run(args->tun_fd, args->key, args->server, args->port) != 0) {
         LOGE("VPN session ended with an error");
     }
-    if (env != NULL) {
-        notify_exit(env);
-        if (!attached) {
-            (*jvm)->DetachCurrentThread(jvm);
+    const int owner = args->gen == session_gen;
+    if (owner) {
+        vpn_running = 0;
+        if (env != NULL) {
+            notify_exit(env);
         }
+    } else {
+        LOGW("stale session (gen %u) exited; keeping gen %u", args->gen, session_gen);
+    }
+    if (env != NULL && !attached) {
+        (*jvm)->DetachCurrentThread(jvm);
     }
     free(args);
 
@@ -165,8 +176,18 @@ Java_io_github_dongyuwei_dsvpn_DsvpnNative_start(JNIEnv *env, jclass clazz, jint
 
     (void) clazz;
     if (vpn_running) {
-        LOGW("nativeStart: a session is already active");
-        return -1;
+        /* A just-stopped session can take up to a poll tick (or a blocked
+         * connect) to unwind; wait for it instead of failing outright. */
+        int waited_ms = 0;
+        LOGW("nativeStart: waiting for the previous session to unwind");
+        while (vpn_running && waited_ms < 15000) {
+            usleep(100 * 1000);
+            waited_ms += 100;
+        }
+        if (vpn_running) {
+            LOGE("nativeStart: the previous session is still running");
+            return -1;
+        }
     }
     if ((args = malloc(sizeof *args)) == NULL) {
         return -1;
@@ -198,6 +219,7 @@ Java_io_github_dongyuwei_dsvpn_DsvpnNative_start(JNIEnv *env, jclass clazz, jint
     (*env)->ReleaseStringUTFChars(env, server, server_utf);
     (*env)->ReleaseStringUTFChars(env, port, port_utf);
     args->tun_fd = tun_fd;
+    args->gen    = ++session_gen;
 
     /* Set before pthread_create: the thread may fail and notify its exit
      * before the creating thread runs again. */
