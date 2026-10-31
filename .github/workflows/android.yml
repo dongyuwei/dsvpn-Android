@@ -1,0 +1,151 @@
+# Build the Android VPN client and publish APKs to GitHub Releases.
+#
+# - Push to master: build only (artifacts on the Actions run page).
+# - Pull request touching android/: build only.
+# - Push a tag v*: build and attach APKs to a GitHub Release.
+#
+# Optional repo secrets for stable release signing (otherwise APKs are
+# debug-signed and must be uninstalled before upgrading):
+#   DSVPN_KEYSTORE_BASE64  base64 of a JKS keystore
+#   DSVPN_KEYSTORE_PASSWORD  keystore password
+#   DSVPN_KEY_ALIAS        key alias
+#   DSVPN_KEY_PASSWORD     key password (defaults to keystore password)
+name: Android
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "android/**"
+      - "src/**"
+      - "include/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write # creating GitHub Releases on tag builds
+
+jobs:
+  build:
+    name: Build APKs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Locate or install Android NDK
+        run: |
+          NDK_DIR=$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$NDK_DIR" ]; then
+            yes | sdkmanager "ndk;27.2.12479018" > /dev/null
+            NDK_DIR="$ANDROID_HOME/ndk/27.2.12479018"
+          fi
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "Using NDK: $NDK_DIR"
+
+      # The secrets context is not allowed in step-level if-expressions, so
+      # guard inside the script with values passed through env instead.
+      - name: Decode signing keystore (if configured)
+        env:
+          KEYSTORE_B64: ${{ secrets.DSVPN_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.DSVPN_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DSVPN_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.DSVPN_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "No signing secrets configured; APKs will be debug-signed."
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          {
+            echo "DSVPN_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore"
+            echo "DSVPN_KEYSTORE_PASSWORD=$KEYSTORE_PASS"
+            echo "DSVPN_KEY_ALIAS=$KEY_ALIAS"
+            echo "DSVPN_KEY_PASSWORD=$KEY_PASS"
+          } >> "$GITHUB_ENV"
+
+      - name: Build APKs (universal + arm64)
+        run: |
+          cd android
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            GIT_TAG="$GITHUB_REF_NAME"
+          else
+            VERSION="0.0.0-dev.$GITHUB_RUN_NUMBER"
+            GIT_TAG=""
+          fi
+          ARGS=(
+            -PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER"
+            -PgitTag="$GIT_TAG"
+            -PgitHash="$(git rev-parse --short HEAD)"
+            -PbuildDate="$(date -u +%Y%m%d)"
+          )
+
+          # Both variants write to app-release.apk, so snapshot each one
+          # before building the next.
+          ./gradlew --no-daemon :app:assembleRelease "${ARGS[@]}"
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/DSVPN-$VERSION-universal.apk"
+
+          ./gradlew --no-daemon :app:assembleRelease "${ARGS[@]}" -Pabi=arm64-v8a
+          cp app/build/outputs/apk/release/app-release.apk "dist/DSVPN-$VERSION-arm64.apk"
+
+          (cd dist && shasum -a 256 ./*.apk > SHA256SUMS)
+          ls -lh dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSVPN-apks
+          path: |
+            android/dist/*.apk
+            android/dist/SHA256SUMS
+          if-no-files-found: error
+
+      # Rolling pre-release on every master push: the movable `pre-release`
+      # tag is force-moved to HEAD and the release assets are replaced.
+      # It does not match the v* tag trigger, so no workflow loop.
+      - name: Roll pre-release tag
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f pre-release "$GITHUB_SHA"
+          git push origin pre-release --force
+
+      - name: Publish rolling pre-release
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pre-release
+          name: "Pre-release (master)"
+          prerelease: true
+          make_latest: false
+          body: |
+            Automated build from master @ ${{ github.sha }}
+
+            Install over previous pre-releases; downgrade to stable
+            releases may require uninstalling first.
+          files: |
+            android/dist/*.apk
+            android/dist/SHA256SUMS
+
+      - name: Create GitHub Release with APKs
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android/dist/*.apk
+            android/dist/SHA256SUMS
+          generate_release_notes: true
