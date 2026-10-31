@@ -448,22 +448,27 @@ fun MainScreen() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                "github.com/dongyuwei/dsvpn",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .clickable {
-                        runCatching {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/dongyuwei/dsvpn")),
-                            )
-                        }
-                    }
-                    .padding(vertical = 4.dp),
-            )
+            LinkText("Server (upstream): github.com/jedisct1/dsvpn", "https://github.com/jedisct1/dsvpn")
+            LinkText("Android client: github.com/dongyuwei/dsvpn-Andoid", "https://github.com/dongyuwei/dsvpn-Andoid")
         }
     }
+}
+
+@Composable
+private fun LinkText(label: String, url: String) {
+    val context = LocalContext.current
+    Text(
+        label,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .clickable {
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
+            }
+            .padding(vertical = 2.dp),
+    )
 }
 
 data class AppEntry(
