@@ -449,7 +449,7 @@ fun MainScreen() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             LinkText("Server (upstream): github.com/jedisct1/dsvpn", "https://github.com/jedisct1/dsvpn")
-            LinkText("Android client: github.com/dongyuwei/dsvpn-Andoid", "https://github.com/dongyuwei/dsvpn-Andoid")
+            LinkText("Android client: github.com/dongyuwei/dsvpn-Android", "https://github.com/dongyuwei/dsvpn-Android")
         }
     }
 }

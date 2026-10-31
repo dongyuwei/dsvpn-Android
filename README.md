@@ -1,7 +1,8 @@
 # ![DSVPN](https://raw.github.com/jedisct1/dsvpn/master/logo.png)
 
-[![GitHub CI status](https://github.com/jedisct1/dsvpn/workflows/CI/badge.svg)](https://github.com/jedisct1/dsvpn/actions)
-![CodeQL scan](https://github.com/jedisct1/dsvpn/workflows/CodeQL%20scan/badge.svg)
+[![GitHub CI status](https://github.com/dongyuwei/dsvpn-Android/workflows/CI/badge.svg)](https://github.com/dongyuwei/dsvpn-Android/actions/workflows/c.yml)
+[![Android](https://github.com/dongyuwei/dsvpn-Android/workflows/Android/badge.svg)](https://github.com/dongyuwei/dsvpn-Android/actions/workflows/android.yml)
+[![CodeQL scan](https://github.com/dongyuwei/dsvpn-Android/workflows/CodeQL%20scan/badge.svg)](https://github.com/dongyuwei/dsvpn-Android/actions/workflows/codeql-analysis.yml)
 
 ## Android VPN client (addition in this repository)
 
