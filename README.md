@@ -122,6 +122,7 @@ If all the remaining parameters of a command would be `auto`, they don't have to
 
 ## Related projects
 
+* [android/](android/README.md) is an Android client for DSVPN, built on this repository's own C core
 * [dsvpn-ios](https://github.com/jedisct1/dsvpn-ios) is an iOS client for DSVPN
 * Robert Debock maintains [an Ansible role for DSVPN](https://github.com/robertdebock/ansible-role-dsvpn)
 * [OpenMPTCProuter](http://www.openmptcprouter.com/) is an OpenWrt-based router OS that supports DSVPN
